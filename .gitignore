@@ -8,11 +8,17 @@ __pycache__
 **.pyc
 *.png
 *.txt
+*.err
+*.out
+logs/
+logs
 **/outputs/
 **/wandb/
 **/exp/
 **/exp_local/
 data/
+checkpoints/
+checkpoints-meta/
 eval/
 assets/
 **.pth
