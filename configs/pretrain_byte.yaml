@@ -1,0 +1,78 @@
+defaults:
+  - _self_
+  - model: small
+
+ngpus: 4  # Multi-GPU training
+tokens: 259  # 256 bytes + PAD + BOS + EOS
+
+training:
+  batch_size: 128  # Larger batch for pre-training
+  accum: 1
+  n_iters: 20000  # Pre-training iterations
+  snapshot_freq: 5000
+  log_freq: 100
+  eval_freq: 1000
+  snapshot_freq_for_preemption: 2500
+  weight: standard
+  snapshot_sampling: True
+  ema: 0.999
+  disable_checkpoint_loading: false  # Set to true to start from scratch
+
+data:
+  train: byte_wikipedia
+  valid: byte_wikipedia
+  cache_dir: data
+
+graph:
+  type: absorb
+  file: data
+  report_all: False
+
+noise:
+  type: loglinear
+  sigma_min: 1e-4
+  sigma_max: 20
+
+sampling:
+  predictor: analytic
+  steps: 64
+  noise_removal: True
+
+eval:
+  batch_size: 64
+  perplexity: True
+  perplexity_batch_size: 16
+
+optim:
+  weight_decay: 0.01
+  optimizer: AdamW
+  lr: 3e-4
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1e-8
+  warmup: 2000
+  grad_clip: 1.
+
+model:
+  hidden_size: 384
+  cond_dim: 96
+  length: 128
+  n_blocks: 6
+  n_heads: 6
+  scale_by_sigma: True
+  dropout: 0.1
+
+logging:
+  use_wandb: ${oc.env:USE_WANDB,false}  # Set USE_WANDB=true to enable
+  wandb_project: "palindrome-diffusion"
+  wandb_entity: null  # Your wandb entity/username
+  log_grad_norm: true
+  log_param_norm: true
+  log_learning_rate: true
+
+hydra:
+  run:
+    dir: exp_local/pretrain_byte/${now:%Y.%m.%d}/${now:%H%M%S}
+  sweep:
+    dir: exp/pretrain_byte/${now:%Y.%m.%d}/${now:%H%M%S}
+    subdir: ${hydra.job.num}

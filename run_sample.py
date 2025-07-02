@@ -9,7 +9,7 @@ import sampling
 
 def main():
     parser = argparse.ArgumentParser(description="Generate some samples")
-    parser.add_argument("--model_path", default="louaaron/sedd-medium", type=str)
+    parser.add_argument("--model_path", default="louaaron/sedd-small", type=str)
     parser.add_argument("--dataset", default="wikitext103", type=str)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--steps", type=int, default=1024)
