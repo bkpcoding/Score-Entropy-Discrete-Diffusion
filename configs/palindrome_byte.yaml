@@ -47,19 +47,19 @@ eval:
 optim:
   weight_decay: 0.01
   optimizer: AdamW
-  lr: 3e-4  # Increase learning rate
+  lr: 3e-4
   beta1: 0.9
-  beta2: 0.95  # Adjust beta2 for better training
+  beta2: 0.95
   eps: 1e-8
-  warmup: 2000  # Longer warmup
+  warmup: 2000
   grad_clip: 1.
 
 model:
-  hidden_size: 384  # Smaller model for byte-level
+  hidden_size: 384
   cond_dim: 96
-  length: 128  # Max sequence length for palindromes
-  n_blocks: 6   # Fewer blocks
-  n_heads: 6    # Fewer heads
+  length: 128
+  n_blocks: 6
+  n_heads: 6
   scale_by_sigma: True
   dropout: 0.1
 

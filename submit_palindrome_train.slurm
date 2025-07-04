@@ -53,8 +53,8 @@ echo "Starting pre-training on Wikipedia..."
 python /nfs/turbo/coe-mandmlab/bpatil/projects/Score-Entropy-Discrete-Diffusion/pretrain_byte.py \
     ngpus=$SLURM_GPUS_PER_NODE \
     training.batch_size=1024 \
-    training.n_iters=100000 \
-    training.disable_checkpoint_loading=false \
+    training.n_iters=200000 \
+    training.disable_checkpoint_loading=true \
     model.hidden_size=384 \
     model.n_blocks=6 \
     model.n_heads=6

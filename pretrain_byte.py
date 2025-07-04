@@ -211,9 +211,9 @@ def _run_pretraining(rank, world_size, cfg):
     
     initial_step = int(state['step'])
     
-    # Get data loaders - start with smaller dataset for testing
+    # Get data loaders - now memory efficient with streaming
     mprint("Loading Wikipedia dataset (this may take a few minutes)...")
-    train_ds, eval_ds = get_byte_wikipedia_dataloaders(cfg, distributed=(world_size > 1), max_samples=1000000)
+    train_ds, eval_ds = get_byte_wikipedia_dataloaders(cfg, distributed=(world_size > 1), max_samples=cfg.training.get('max_samples', 500000))
     train_iter = iter(train_ds)
     eval_iter = iter(eval_ds)
     mprint(f"Dataset loaded successfully")

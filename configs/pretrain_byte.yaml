@@ -17,6 +17,7 @@ training:
   snapshot_sampling: True
   ema: 0.999
   disable_checkpoint_loading: false  # Set to true to start from scratch
+  max_samples: 10000000
 
 data:
   train: byte_wikipedia

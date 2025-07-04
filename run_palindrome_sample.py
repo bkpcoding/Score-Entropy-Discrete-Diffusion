@@ -11,11 +11,11 @@ def main():
     parser = argparse.ArgumentParser(description="Generate palindrome samples")
     parser.add_argument("--model_path", default="checkpoints/best_model.pth", type=str,
                        help="Path to trained palindrome model")
-    parser.add_argument("--num_samples", type=int, default=20,
+    parser.add_argument("--num_samples", type=int, default=40,
                        help="Number of palindromes to generate")
-    parser.add_argument("--max_length", type=int, default=128,
+    parser.add_argument("--max_length", type=int, default=8,
                        help="Maximum length of generated palindromes")
-    parser.add_argument("--steps", type=int, default=64,
+    parser.add_argument("--steps", type=int, default=100,
                        help="Number of diffusion steps")
     parser.add_argument("--constraint_strength", type=float, default=0.8,
                        help="Strength of palindrome constraints (0.0 to 1.0)")

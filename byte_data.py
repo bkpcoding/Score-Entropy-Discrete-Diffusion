@@ -4,6 +4,10 @@ from datasets import load_dataset, Dataset
 from torch.utils.data import DataLoader, DistributedSampler
 from data import cycle_loader
 import re
+from multiprocessing import Pool
+import time
+import psutil
+import os
 
 
 class ByteProcessor:
@@ -72,71 +76,206 @@ def clean_text(text):
     text = re.sub(r'\s+', ' ', text)         # Normalize whitespace
     text = text.strip()
     
-    # Filter out very short or very long texts
-    if len(text) < 10 or len(text) > 500:
+    # Filter out very short texts
+    if len(text) < 100:
+        print(f"Skipping text of length {len(text)}")
         return None
     
     return text
 
 
-def get_byte_wikipedia_dataset(mode="train", cache_dir=None, block_size=128, num_proc=8, max_samples=50000):
-    """Get byte-level Wikipedia dataset"""
-    
-    # Load Wikipedia dataset
-    if mode == "train":
-        dataset = load_dataset("wikipedia", "20220301.en", split="train", cache_dir=cache_dir, streaming=False)
-        # Take subset for faster processing
-        dataset = dataset.select(range(min(max_samples, len(dataset))))
-    else:
-        # Use a smaller validation set
-        dataset = load_dataset("wikipedia", "20220301.en", split="train", cache_dir=cache_dir, streaming=False)
-        start_idx = max_samples
-        end_idx = min(start_idx + max_samples // 10, len(dataset))
-        dataset = dataset.select(range(start_idx, end_idx))
-    
+def process_single_example(args):
+    """Process a single text example and yield chunks - global function for multiprocessing"""
+    text, block_size = args
+    cleaned_text = clean_text(text)
+    if not cleaned_text:
+        return []
+        
+    # Split long texts into chunks - work directly with bytes
+    chunk_size = block_size - 2  # Leave room for special tokens
     processor = ByteProcessor(max_length=block_size)
+    text_bytes = processor.text_to_bytes(cleaned_text)
     
-    def process_examples(examples):
-        encoded_data = []
-        for text in examples['text']:
-            cleaned_text = clean_text(text)
-            if cleaned_text:
-                # Split long texts into chunks
-                chunk_size = block_size - 20  # Leave room for special tokens
-                text_bytes = processor.text_to_bytes(cleaned_text)
-                
-                # Create multiple samples from long texts
-                for i in range(0, len(text_bytes), chunk_size):
-                    chunk = text_bytes[i:i + chunk_size]
-                    if len(chunk) >= 10:  # Minimum chunk size
-                        chunk_text = processor.bytes_to_text(chunk)
-                        byte_seq = processor.encode_text(chunk_text)
-                        encoded_data.append({"input_ids": byte_seq})
-        
-        return {"processed": encoded_data}
+    chunks = []
+    # Create multiple samples from long texts - avoid redundant conversions
+    for i in range(0, len(text_bytes), chunk_size):
+        chunk = text_bytes[i:i + chunk_size]
+        if len(chunk) >= 10:  # Minimum chunk size
+            # Direct encoding without intermediate text conversion
+            encoded = [processor.BOS] + chunk + [processor.EOS]
+            if len(encoded) > block_size:
+                encoded = encoded[:block_size-1] + [processor.EOS]
+            else:
+                encoded = encoded + [processor.PAD] * (block_size - len(encoded))
+            chunks.append({"input_ids": encoded})
     
-    # Process the dataset
+    return chunks
+
+
+def ensure_wikipedia_download(cache_dir=None):
+    """Ensure Wikipedia dataset is fully downloaded and cached"""
+    print("\n=== ENSURING WIKIPEDIA DATASET IS COMPLETE ===")
+    
+    if not cache_dir:
+        cache_dir = "data"
+    
+    # Force download to complete
+    try:
+        print("Forcing complete download of Wikipedia dataset...")
+        dataset = load_dataset("wikipedia", "20220301.en", split="train", cache_dir=cache_dir)
+        print(f"✓ Wikipedia dataset ready: {len(dataset)} samples")
+        return True
+    except Exception as e:
+        print(f"✗ Failed to download Wikipedia dataset: {e}")
+        return False
+
+
+def get_byte_wikipedia_dataset(mode="train", cache_dir=None, block_size=128, num_proc=8, max_samples=50000):
+    """Get byte-level Wikipedia dataset using cached data for memory efficiency"""
+    
+    start_time = time.time()
+    print(f"\n=== BENCHMARK: Starting dataset creation ===")
+    print(f"Mode: {mode}, Block size: {block_size}, Num processes: {num_proc}, Max samples: {max_samples}")
+    
+    # Load cached Wikipedia dataset without streaming first to get length info
+    load_start = time.time()
+    try:
+        # Check if cache exists and is complete
+        import os
+        if cache_dir and os.path.exists(cache_dir):
+            cache_path = os.path.join(cache_dir, "wikipedia", "20220301.en", "2.0.0")
+            if os.path.exists(cache_path):
+                print(f"Found cache directory: {cache_path}")
+                # Check for incomplete lock files
+                incomplete_files = [f for f in os.listdir(cache_path) if f.endswith('.incomplete_info.lock')]
+                if incomplete_files:
+                    print(f"⚠️  Found incomplete cache files: {incomplete_files}")
+                    print("Cache is incomplete, will need to download...")
+        full_dataset = load_dataset("wikipedia", "20220301.en", split="train", cache_dir=cache_dir)
+        total_samples = len(full_dataset)
+        load_time = time.time() - load_start
+        print(f"✓ Dataset loading: {load_time:.2f}s - Found cached dataset with {total_samples} samples")
+    except Exception as e:
+        # Fallback to streaming if cached version fails
+        load_time = time.time() - load_start
+        print(f"✗ Dataset loading: {load_time:.2f}s - Cache failed ({e}), using streaming dataset (slower)")
+        full_dataset = load_dataset("wikipedia", "20220301.en", split="train", cache_dir=cache_dir, streaming=True)
+        total_samples = None
+    
+    # Determine sample range
+    select_start = time.time()
+    if mode == "train":
+        start_idx = 0
+        end_idx = min(max_samples, total_samples) if total_samples else None
+    else:
+        # Use different samples for validation
+        start_idx = max_samples if total_samples else max_samples
+        end_idx = min(start_idx + max_samples, total_samples) if total_samples else None
+    
+    # Use cached dataset with selection if we have total_samples
+    if total_samples:
+        if end_idx:
+            dataset = full_dataset.select(range(start_idx, end_idx))
+        else:
+            dataset = full_dataset.select(range(start_idx, min(start_idx + max_samples * 2, total_samples)))
+    else:
+        # Use streaming dataset
+        dataset = full_dataset
+    
+    select_time = time.time() - select_start
+    print(f"✓ Dataset selection: {select_time:.2f}s - Selected {len(dataset) if hasattr(dataset, '__len__') else 'streaming'} samples")
+    
+    
+    # Process the dataset using multiprocessing for better performance
     processed_data = []
-    for i in range(0, len(dataset), 1000):  # Process in batches
-        batch = dataset[i:i+1000]
-        result = process_examples(batch)
-        processed_data.extend(result["processed"])
-        
-        if len(processed_data) >= max_samples:
-            break
     
-    # Limit to max_samples
-    processed_data = processed_data[:max_samples]
+    # Process dataset (either selected subset or streaming)
+    if total_samples:
+        # Process selected subset with multiprocessing
+        extraction_start = time.time()
+        print(f"Processing {len(dataset)} articles from cached dataset using {num_proc} processes")
+        # Sagar - each example is a article
+        texts = [example['text'] for example in dataset]
+        extraction_time = time.time() - extraction_start
+        print(f"✓ Text extraction: {extraction_time:.2f}s")
+        
+        # Memory usage before processing
+        process = psutil.Process(os.getpid())
+        mem_before = process.memory_info().rss / 1024 / 1024  # MB
+        
+        # Use multiprocessing for faster processing
+        processing_start = time.time()
+        # Prepare arguments for multiprocessing
+        # Sagar- each text is a article
+        args_list = [(text, block_size) for text in texts]
+        with Pool(num_proc) as pool:
+            # Sagar - The chunk results seems to have a lot 256 tokens (PAD)?
+            chunk_results = pool.map(process_single_example, args_list)
+        processing_time = time.time() - processing_start
+        print(f"✓ Text Processing: {processing_time:.2f}s ({processing_time/len(texts)*1000:.1f}ms per article)")
+        # Flatten results and limit to max_samples
+        flatten_start = time.time()
+        for chunks in chunk_results:
+            processed_data.extend(chunks)
+            if len(processed_data) >= max_samples:
+                processed_data = processed_data[:max_samples]
+                break
+        flatten_time = time.time() - flatten_start
+        
+        # Memory usage after processing
+        mem_after = process.memory_info().rss / 1024 / 1024  # MB
+        print(f"✓ Result flattening: {flatten_time:.2f}s")
+        print(f"✓ Memory usage: {mem_before:.1f}MB -> {mem_after:.1f}MB (+{mem_after-mem_before:.1f}MB)")
+        print(f"✓ Processed {len(texts)} articles, got {len(processed_data)} samples")
+    else:
+        # Process streaming dataset (fallback to sequential for streaming)
+        print("Processing streaming dataset")
+        samples_processed = 0
+        for example in dataset:
+            chunks = process_single_example((example['text'], block_size))
+            processed_data.extend(chunks)
+            samples_processed += 1
+            
+            # Stop when we have enough samples
+            if len(processed_data) >= max_samples:
+                processed_data = processed_data[:max_samples]
+                break
+                
+            # Print progress occasionally
+            if samples_processed % 1000 == 0:
+                print(f"Processed {samples_processed} articles, got {len(processed_data)} samples")
     
     # Create dataset
+    dataset_creation_start = time.time()
     final_dataset = Dataset.from_list(processed_data)
     final_dataset = final_dataset.with_format('torch')
+    dataset_creation_time = time.time() - dataset_creation_start
+    
+    total_time = time.time() - start_time
+    print(f"✓ Dataset creation: {dataset_creation_time:.2f}s")
+    print(f"=== BENCHMARK COMPLETE: {total_time:.2f}s total ===")
+    print(f"Final dataset size: {len(final_dataset)} samples")
+    print(f"Processing rate: {len(final_dataset)/total_time:.1f} samples/s\n")
     
     return final_dataset
 
 
 def get_byte_wikipedia_dataloaders(config, distributed=True, max_samples=50000):
-    """Get byte-level Wikipedia dataloaders"""
+    """Get byte-level Wikipedia dataloaders - uses binary files if available, otherwise processes on-the-fly"""
+    
+    # Check if preprocessed binary files exist
+    if os.path.exists('train.bin') and os.path.exists('val.bin'):
+        print("✓ Found preprocessed binary files - using fast binary loader")
+        try:
+            from binary_data_loader import get_binary_dataloaders
+            return get_binary_dataloaders(config, distributed)
+        except ImportError:
+            print("⚠️  binary_data_loader not found, falling back to on-the-fly processing")
+    else:
+        print("⚠️  Binary files not found - using slower on-the-fly processing")
+        print("    Run 'python prepare_byte_data.py' to create fast binary files")
+    
+    # Fallback to original processing
     if config.training.batch_size % (config.ngpus * config.training.accum) != 0:
         raise ValueError(f"Train Batch Size {config.training.batch_size} is not divisible by {config.ngpus} gpus with accumulation {config.training.accum}.")
     if config.eval.batch_size % (config.ngpus * config.training.accum) != 0:

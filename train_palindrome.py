@@ -14,7 +14,7 @@ import graph_lib
 import noise_lib
 import losses
 import utils
-from byte_palindrome_data import get_byte_palindrome_dataloaders
+from palindrome_json_loader import get_palindrome_dataloaders
 from logger_utils import setup_logger
 
 
@@ -37,14 +37,21 @@ def save_checkpoint_single_gpu(ckpt_dir, state):
 
 
 def restore_checkpoint_single_gpu(ckpt_dir, state, device):
-    """Restore checkpoint handling both DDP and non-DDP models"""
+    """Restore checkpoint handling both DDP and non-DDP models with graceful optimizer loading"""
     if not os.path.exists(ckpt_dir):
         utils.makedirs(os.path.dirname(ckpt_dir))
         logging.warning(f"No checkpoint found at {ckpt_dir}. Returned the same state as input")
         return state
     else:
         loaded_state = torch.load(ckpt_dir, map_location=device)
-        state['optimizer'].load_state_dict(loaded_state['optimizer'])
+        
+        # Try to load optimizer state, but gracefully handle incompatibilities
+        try:
+            state['optimizer'].load_state_dict(loaded_state['optimizer'])
+            logging.info("Successfully loaded optimizer state from checkpoint")
+        except Exception as e:
+            logging.warning(f"Failed to load optimizer state from checkpoint: {e}")
+            logging.info("Continuing with fresh optimizer state (common for fine-tuning)")
         
         # Handle both DDP and non-DDP models
         model = state['model']
@@ -52,9 +59,20 @@ def restore_checkpoint_single_gpu(ckpt_dir, state, device):
             model.module.load_state_dict(loaded_state['model'], strict=False)
         else:
             model.load_state_dict(loaded_state['model'], strict=False)
+        logging.info("Successfully loaded model weights from checkpoint")
             
-        state['ema'].load_state_dict(loaded_state['ema'])
-        state['step'] = loaded_state['step']
+        # Try to load EMA state
+        try:
+            state['ema'].load_state_dict(loaded_state['ema'])
+            logging.info("Successfully loaded EMA state from checkpoint")
+        except Exception as e:
+            logging.warning(f"Failed to load EMA state from checkpoint: {e}")
+            logging.info("Continuing with fresh EMA state")
+            
+        # Load step count
+        state['step'] = loaded_state.get('step', 0)
+        logging.info(f"Loaded checkpoint from step: {state['step']}")
+        
         return state
 
 
@@ -117,7 +135,7 @@ def generate_sample_palindromes(model, graph, noise, step, device, logger, train
 def run_multiprocess(rank, world_size, cfg, port):
     """Run training with multiprocessing"""
     try:
-        setup_distributed(rank, world_size, port)
+        setup_distributed(rank, world_size, port) 
         _run_training(rank, world_size, cfg)
     finally:
         cleanup_distributed()
@@ -228,7 +246,7 @@ def _run_training(rank, world_size, cfg):
     initial_step = int(state['step'])
     
     # Get data loaders
-    train_ds, eval_ds = get_byte_palindrome_dataloaders(cfg, distributed=(world_size > 1))
+    train_ds, eval_ds = get_palindrome_dataloaders(cfg, distributed=(world_size > 1))
     train_iter = iter(train_ds)
     eval_iter = iter(eval_ds)
     
@@ -324,7 +342,7 @@ def _run_training(rank, world_size, cfg):
 
 @hydra.main(version_base=None, config_path="configs", config_name="palindrome_byte")
 def main(config: DictConfig) -> None:
-    """Main training function for palindrome model"""
+    """Main training function for palindrome model - Single GPU only"""
     
     logging.basicConfig(level=logging.INFO)
     
@@ -335,21 +353,10 @@ def main(config: DictConfig) -> None:
     with open_dict(config):
         config.work_dir = work_dir
         config.wandb_name = os.path.basename(os.path.normpath(work_dir))
+        config.ngpus = 1  # Force single GPU
     
-    # Setup multiprocessing
-    if config.ngpus > 1:
-        import torch.multiprocessing as mp
-        import numpy as np
-        
-        port = int(np.random.randint(10000, 20000))
-        try:
-            mp.set_start_method("forkserver")
-            mp.spawn(run_multiprocess, args=(config.ngpus, config, port), nprocs=config.ngpus, join=True)
-        except Exception as e:
-            logging.critical(e, exc_info=True)
-    else:
-        # Single GPU training
-        _run_training(0, 1, config)
+    # Single GPU training only
+    _run_training(0, 1, config)
 
 
 if __name__ == "__main__":

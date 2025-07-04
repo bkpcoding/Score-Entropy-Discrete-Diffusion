@@ -10,6 +10,7 @@ __pycache__
 *.txt
 *.err
 *.out
+*.bin
 logs/
 logs
 **/outputs/
