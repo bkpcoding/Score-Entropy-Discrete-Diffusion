@@ -2,7 +2,7 @@
 
 ![Palindromes_Diffusion](./palindromes_diffusion.gif)
 
-This directory contains code for training and sampling palindrome generation models using the Score-Entropy Discrete Diffusion (SEDD) framework. The workflow involves data preparation, pre-training on Wikipedia text, fine-tuning on palindrome data, and sampling palindromes from the trained model.
+This directory contains code for training and sampling palindrome generation models using the Score-Entropy Discrete Diffusion (SEDD) framework. The workflow involves data preparation, pre-training on Wikipedia text, fine-tuning on palindrome data, and sampling palindromes from the trained model. 
 
 
 ## Complete Workflow
@@ -40,7 +40,7 @@ python -m palindromes.prepare_byte_data --dataset_percent 10.0 --block_size 32
 
 ### 2. Pre-training on Wikipedia
 
-Pre-train the model on Wikipedia text to learn general language patterns, the exact config can be found in `../configs/pretrain_byte.yaml`
+Pre-train the model on Wikipedia text to learn general language patterns, the exact config can be found in `../configs/pretrain_byte.yaml`. You can also download pretrained model from https://huggingface.co/Sagar18/SEDD/tree/main
 
 ```bash
 python -m palindromes.pretrain
