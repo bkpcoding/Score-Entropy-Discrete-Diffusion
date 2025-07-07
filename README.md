@@ -1,5 +1,7 @@
 # Palindrome Generation with Score-Entropy Discrete Diffusion
 
+![Palindromes_Diffusion](./palindromes_diffusion.gif)
+
 This directory contains code for training and sampling palindrome generation models using the Score-Entropy Discrete Diffusion (SEDD) framework. The workflow involves data preparation, pre-training on Wikipedia text, fine-tuning on palindrome data, and sampling palindromes from the trained model.
 
 
@@ -223,44 +225,6 @@ This creates visualizations showing:
 - Uses trained model to generate palindromes
 - Applies diffusion process for controlled generation
 - Evaluates palindrome validity and quality
-
-## Output Examples
-
-Typical palindrome generation results:
-
-```
-Using device: cuda
-Loading model from: palindromes/checkpoints/checkpoints/finetune_checkpoint_71.pth
-
-Generating 50 palindromes...
-Max length: 16, Steps: 100
-============================================================
-
- 1: ✓ PALINDROME     | 'level'
- 2: ✓ PALINDROME     | 'radar'
- 3: ✓ PALINDROME     | 'civic'
- 4: ✗ Not palindrome | 'hello'
- 5: ✓ PALINDROME     | 'madam'
- 6: ✓ PALINDROME     | 'rotor'
- 7: ✓ PALINDROME     | 'noon'
- 8: ✓ PALINDROME     | 'deed'
- 9: ✓ PALINDROME     | 'peep'
-10: ✓ PALINDROME     | 'wow'
-
-============================================================
-Generated samples: 50
-Non-empty: 48
-Valid palindromes: 42
-Palindrome rate: 87.5%
-Average palindrome length: 8.3 characters
-
-Best palindromes generated:
-  1: 'racecar' (length: 7)
-  2: 'level' (length: 5)
-  3: 'radar' (length: 5)
-  4: 'civic' (length: 5)
-  5: 'madam' (length: 5)
-```
 
 ## Troubleshooting
 
