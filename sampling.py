@@ -74,15 +74,19 @@ class NonePredictor(Predictor):
 
 @register_predictor(name="analytic")
 class AnalyticPredictor(Predictor):
-    def update_fn(self, score_fn, x, t, step_size):
+    def update_fn(self, score_fn, x, t, step_size, palindrome_sampling=False):
         curr_sigma = self.noise(t)[0]
         next_sigma = self.noise(t - step_size)[0]
         dsigma = curr_sigma - next_sigma
 
         score = score_fn(x, curr_sigma)
-
         stag_score = self.graph.staggered_score(score, dsigma)
         probs = stag_score * self.graph.transp_transition(x, dsigma)
+        # average the probabs at symmetric positions for palindrome
+        # do a coin flip whether to average or not
+        if palindrome_sampling:
+        # if torch.rand(1) < 0.5:
+            probs = (probs + torch.flip(probs, [1])) / 2
         return sample_categorical(probs)
 
     
@@ -119,7 +123,7 @@ def get_sampling_fn(config, graph, noise, batch_dims, eps, device):
     return sampling_fn
     
 
-def get_pc_sampler(graph, noise, batch_dims, predictor, steps, denoise=True, eps=1e-5, device=torch.device('cpu'), proj_fun=lambda x: x):
+def get_pc_sampler(graph, noise, batch_dims, predictor, steps, denoise=True, eps=1e-5, device=torch.device('cpu'), proj_fun=lambda x: x, palindrome_sampling=False):
     predictor = get_predictor(predictor)(graph, noise)
     projector = proj_fun
     denoiser = Denoiser(graph, noise)
@@ -134,7 +138,10 @@ def get_pc_sampler(graph, noise, batch_dims, predictor, steps, denoise=True, eps
         for i in range(steps):
             t = timesteps[i] * torch.ones(x.shape[0], 1, device=device)
             x = projector(x)
-            x = predictor.update_fn(sampling_score_fn, x, t, dt)
+            if palindrome_sampling:
+                x = predictor.update_fn(sampling_score_fn, x, t, dt, palindrome_sampling)
+            else:
+                x = predictor.update_fn(sampling_score_fn, x, t, dt)
             
 
         if denoise:

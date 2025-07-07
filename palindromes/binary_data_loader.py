@@ -61,8 +61,10 @@ def get_binary_dataloaders(config, distributed=True):
         raise ValueError(f"Eval Batch Size {config.eval.batch_size} is not divisible by {config.ngpus} gpus with accumulation {config.training.accum}.")
     
     # Create datasets
-    train_dataset = BinaryDataset('train.bin', block_size=config.model.length)
-    val_dataset = BinaryDataset('val.bin', block_size=config.model.length)
+    train_dataset = BinaryDataset('train_filter.bin', block_size=config.model.length)
+    #  ********* for validation overfit
+    # train_dataset = BinaryDataset('val.bin', block_size=config.model.length)
+    val_dataset = BinaryDataset('val_filter.bin', block_size=config.model.length)
     
     # Create samplers
     if distributed:

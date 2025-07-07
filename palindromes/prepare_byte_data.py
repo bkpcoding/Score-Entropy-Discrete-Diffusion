@@ -45,12 +45,12 @@ def parse_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description="Preprocess Wikipedia dataset for byte-level training")
     
-    parser.add_argument("--dataset_percent", type=float, default=15.0,
+    parser.add_argument("--dataset_percent", type=float, default=20.0,
                        help="Percentage of dataset to use (default: 15.0)")
     parser.add_argument("--val_split_ratio", type=float, default=0.001,
                        help="Validation split ratio (default: 0.001)")
-    parser.add_argument("--block_size", type=int, default=128,
-                       help="Sequence block size (default: 128)")
+    parser.add_argument("--block_size", type=int, default=32,
+                       help="Sequence block size (default: 32)")
     parser.add_argument("--num_proc", type=int, default=8,
                        help="Number of processes for parallel processing (default: 8)")
     parser.add_argument("--cache_dir", type=str, default="data",
@@ -62,7 +62,7 @@ def parse_args():
 
 
 def clean_text(text):
-    """Clean Wikipedia text - enhanced version"""
+    """Clean Wikipedia text - keep spaces between words and remove non-English characters"""
     if not text or len(text) < 50:
         return None
     
@@ -71,6 +71,28 @@ def clean_text(text):
     text = re.sub(r'\{\{.*?\}\}', '', text)  # Remove templates
     text = re.sub(r'<.*?>', '', text)        # Remove HTML tags
     text = re.sub(r'\s+', ' ', text)         # Normalize whitespace to single spaces
+    
+    # Convert to lowercase
+    text = text.lower()
+    
+    # Keep only English letters (a-z) and spaces - remove all punctuation, numbers, and non-English characters
+    text = re.sub(r'[^a-z ]', '', text)
+    
+    # Remove extra spaces that might have been created
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Split into words and filter out very short words
+    words = text.split()
+    filtered_words = []
+    
+    for word in words:
+        # Keep words that are at least 2 characters long
+        if len(word) >= 2:
+            filtered_words.append(word)
+    
+    # Join words with spaces to maintain word boundaries
+    text = ' '.join(filtered_words)
+    
     text = text.strip()
     
     # Filter out very short or very long texts
@@ -91,6 +113,7 @@ def process_example(example):
     cleaned_text = clean_text(text)
     
     if not cleaned_text:
+        # Return empty list but ensure consistent type
         return {'ids': [], 'len': 0}
     
     # Convert to bytes
@@ -99,25 +122,51 @@ def process_example(example):
     # Add BOS and EOS tokens
     ids = [BOS] + byte_seq + [EOS]
     
+    # Ensure ids is always a list of integers
+    ids = [int(x) for x in ids]
+    
     return {'ids': ids, 'len': len(ids)}
 
 
 def chunk_single_sequence(args):
-    """Chunk a single sequence - for multiprocessing"""
+    """Chunk a single sequence - for multiprocessing, respecting word boundaries"""
     ids, block_size = args
     if len(ids) == 0:
         return []
     
     chunks = []
-    # Split into chunks of block_size
-    for i in range(0, len(ids), block_size):
-        chunk = ids[i:i + block_size]
+    i = 0
+    space_byte = ord(' ')  # Space character as byte
+    
+    while i < len(ids):
+        # Start with a chunk of block_size
+        chunk_end = min(i + block_size, len(ids))
+        
+        # If we're at the end of the sequence, take what's left
+        if chunk_end == len(ids):
+            chunk = ids[i:chunk_end]
+        else:
+            # Look for the last space within the block to avoid cutting words
+            last_space_pos = None
+            for j in range(chunk_end - 1, i, -1):
+                if ids[j] == space_byte:
+                    last_space_pos = j
+                    break
+            
+            # If we found a space and it's not too close to the beginning
+            # (keep at least 20 tokens to avoid very short chunks)
+            if last_space_pos is not None and (last_space_pos - i) >= 20:
+                chunk = ids[i:last_space_pos + 1]  # Include the space
+            else:
+                # No good space found, take the full block (may cut word)
+                chunk = ids[i:chunk_end]
         
         # Pad if necessary
         if len(chunk) < block_size:
             chunk = chunk + [PAD] * (block_size - len(chunk))
         
         chunks.append(chunk)
+        i += len(chunk) - chunk.count(PAD)  # Move past the actual content (not padding)
     
     return chunks
 
@@ -240,13 +289,16 @@ def main():
     print(f"\\nProcessing dataset using HuggingFace multiprocessing with {args.num_proc} processes...")
     process_start = time.time()
     
-    # Use dataset.map() which handles multiprocessing properly
-    tokenized = split_dataset.map(
-        process_example,
-        remove_columns=['text', 'url', 'title'],
-        desc="Processing articles",
-        num_proc=args.num_proc,
-    )
+    # Process train and validation splits separately to avoid schema conflicts
+    tokenized = {}
+    for split_name in ['train', 'val']:
+        print(f"Processing {split_name} split...")
+        tokenized[split_name] = split_dataset[split_name].map(
+            process_example,
+            remove_columns=split_dataset[split_name].column_names,
+            desc=f"Processing {split_name} articles",
+            num_proc=args.num_proc,  # Use multi-processing for faster processing
+        )
     
     process_time = time.time() - process_start
     print(f"✓ Processing completed in {process_time:.2f}s")
@@ -272,7 +324,7 @@ def main():
         
         # Save to binary file with optimized batch writing
         save_start = time.time()
-        filename = f'{split_name}.bin'
+        filename = f'{split_name}_filter.bin'
         
         print(f"  Saving to {filename}...")
         
@@ -322,14 +374,14 @@ def main():
     print(f"Vocab size: {vocab_size}")
     print()
     print("Files created:")
-    for filename in ['train.bin', 'val.bin']:
+    for filename in ['train_filter.bin', 'val_filter.bin']:
         if os.path.exists(filename):
             size = os.path.getsize(filename) / 1024 / 1024  # MB
             print(f"  {filename}: {size:.1f}MB")
     
     print("\\nTo read the binary files later:")
-    print("  train_data = np.memmap('train.bin', dtype=np.uint16, mode='r')")
-    print("  val_data = np.memmap('val.bin', dtype=np.uint16, mode='r')")
+    print("  train_data = np.memmap('train_filter.bin', dtype=np.uint16, mode='r')")
+    print("  val_data = np.memmap('val_filter.bin', dtype=np.uint16, mode='r')")
 
 
 if __name__ == '__main__':

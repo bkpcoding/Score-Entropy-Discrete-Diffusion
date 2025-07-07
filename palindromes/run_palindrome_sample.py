@@ -3,26 +3,22 @@ import argparse
 from pathlib import Path
 
 from load_model import load_model
-from palindrome_sampling import sample_palindromes, evaluate_palindrome_quality
-from byte_palindrome_data import BytePalindromeProcessor, is_palindrome
-
+from palindromes.palindrome_sampling import sample_palindromes
 
 def main():
     parser = argparse.ArgumentParser(description="Generate palindrome samples")
     parser.add_argument("--model_path", default="checkpoints/best_model.pth", type=str,
                        help="Path to trained palindrome model")
-    parser.add_argument("--num_samples", type=int, default=40,
+    parser.add_argument("--num_samples", type=int, default=100,
                        help="Number of palindromes to generate")
-    parser.add_argument("--max_length", type=int, default=8,
+    parser.add_argument("--max_length", type=int, default=12,
                        help="Maximum length of generated palindromes")
     parser.add_argument("--steps", type=int, default=100,
                        help="Number of diffusion steps")
-    parser.add_argument("--constraint_strength", type=float, default=0.8,
-                       help="Strength of palindrome constraints (0.0 to 1.0)")
-    parser.add_argument("--evaluate", action="store_true",
-                       help="Run comprehensive evaluation")
     parser.add_argument("--device", type=str, default="cuda",
                        help="Device to use for generation")
+    parser.add_argument("--generate_text", action="store_true",
+                       help="Generate non-palindromic text samples")
     
     args = parser.parse_args()
     
@@ -67,12 +63,21 @@ def main():
         return
     
     
-    # Generate samples
     print(f"\nGenerating {args.num_samples} palindromes...")
     print(f"Max length: {args.max_length}, Steps: {args.steps}")
-    print(f"Constraint strength: {args.constraint_strength}")
     print("=" * 60)
-    
+        
+    # results = sample_palindromes_with_intermediates(
+    #     model=model,
+    #     graph=graph,
+    #     noise=noise,
+    #     num_samples=1,
+    #     max_length=args.max_length,
+    #     steps=args.steps,
+    #     device=device,
+    #     constraint_strength=args.constraint_strength,
+    #     save_every=args.save_every
+    # )
     results = sample_palindromes(
         model=model,
         graph=graph,
@@ -81,9 +86,23 @@ def main():
         max_length=args.max_length,
         steps=args.steps,
         device=device,
-        constraint_strength=args.constraint_strength
     )
-    
+
+            
+    # Generate additional samples normally if more than 1 requested
+    if args.num_samples > 1:
+        print(f"\nGenerating {args.num_samples - 1} additional palindromes...")
+        additional_results = sample_palindromes(
+            model=model,
+            graph=graph,
+            noise=noise,
+            num_samples=args.num_samples - 1,
+            max_length=args.max_length,
+            steps=args.steps,
+            device=device,
+        )
+        results.extend(additional_results)
+        
     # Display results
     valid_palindromes = []
     invalid_palindromes = []
@@ -101,13 +120,13 @@ def main():
             else:
                 invalid_palindromes.append(text)
         else:
-            print(f"{i+1:2d}: ✗ Empty          | ''")
-    
+            print(f"{i+1:2d}: ✗ Empty | ''")
+        
     # Summary statistics
     print("=" * 60)
     total_non_empty = len([r for r in results if len(r['text'].strip()) > 0])
     palindrome_rate = len(valid_palindromes) / max(total_non_empty, 1)
-    
+        
     print(f"Generated samples: {args.num_samples}")
     print(f"Non-empty: {total_non_empty}")
     print(f"Valid palindromes: {len(valid_palindromes)}")
@@ -117,20 +136,9 @@ def main():
         avg_length = sum(len(p) for p in valid_palindromes) / len(valid_palindromes)
         print(f"Average palindrome length: {avg_length:.1f} characters")
     
-    # Comprehensive evaluation
-    if args.evaluate:
-        print("\n" + "=" * 60)
-        print("COMPREHENSIVE EVALUATION")
-        print("=" * 60)
-        
-        eval_results = evaluate_palindrome_quality(
-            model, graph, noise, 
-            num_samples=100, 
-            device=device
-        )
     
     # Show some interesting examples
-    if valid_palindromes:
+    if not args.generate_text and valid_palindromes:
         print(f"\nBest palindromes generated:")
         # Sort by length and show diverse examples
         sorted_palindromes = sorted(set(valid_palindromes), key=len, reverse=True)
@@ -138,38 +146,8 @@ def main():
             print(f"  {i+1}: '{palindrome}' (length: {len(palindrome)})")
 
 
-def test_without_model():
-    """Test palindrome processing without a trained model"""
-    print("Testing palindrome processing (no model required)...")
-    
-    processor = BytePalindromeProcessor(max_length=64)
-    
-    test_cases = [
-        "racecar",
-        "A man a plan a canal Panama", 
-        "Was it a car or a cat I saw",
-        "hello world",
-        "level",
-        "Madam Im Adam"
-    ]
-    
-    print("\nTest cases:")
-    for i, text in enumerate(test_cases):
-        encoded = processor.encode_palindrome(text)
-        decoded = processor.decode_palindrome(encoded)
-        is_pal = is_palindrome(text)
-        
-        print(f"{i+1}: '{text}' -> palindrome: {is_pal}")
-        print(f"   Encoded length: {len([x for x in encoded if x != processor.PAD])}")
-        print(f"   Decoded: '{decoded}'")
-        print()
-
 
 if __name__ == "__main__":
     import sys
     
-    if len(sys.argv) == 1:
-        print("No arguments provided. Running test mode...")
-        test_without_model()
-    else:
-        main()
+    main()

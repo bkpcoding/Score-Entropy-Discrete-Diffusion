@@ -270,10 +270,10 @@ def get_byte_wikipedia_dataloaders(config, distributed=True, max_samples=50000):
             from binary_data_loader import get_binary_dataloaders
             return get_binary_dataloaders(config, distributed)
         except ImportError:
-            print("⚠️  binary_data_loader not found, falling back to on-the-fly processing")
+            print("binary_data_loader not found, falling back to on-the-fly processing")
     else:
-        print("⚠️  Binary files not found - using slower on-the-fly processing")
-        print("    Run 'python prepare_byte_data.py' to create fast binary files")
+        print("Binary files not found - using slower on-the-fly processing")
+        print(" Run 'python prepare_byte_data.py' to create fast binary files")
     
     # Fallback to original processing
     if config.training.batch_size % (config.ngpus * config.training.accum) != 0:

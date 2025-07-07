@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=palindrome_4gpu
+#SBATCH --job-name=palindrome
 #SBATCH --partition=spgpu2
-#SBATCH --account=bucherb_owned1
+#SBATCH --account=account_name
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus-per-node=4
-#SBATCH --mem=128G
+#SBATCH --mem=32G
 #SBATCH --time=48:00:00
 #SBATCH --output=palindrome_train_%j.out
 #SBATCH --error=palindrome_train_%j.err
@@ -30,7 +30,7 @@ export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
 # Enable wandb logging
 export USE_WANDB=true
-export WANDB_PROJECT="palindrome-diffusion-4gpu"
+export WANDB_PROJECT="palindrome-diffusion"
 
 # Print job info
 echo "Job ID: $SLURM_JOB_ID"
@@ -50,14 +50,14 @@ echo "=================="
 
 # Pre-training stage (optional - comment out if already done)
 echo "Starting pre-training on Wikipedia..."
-python /nfs/turbo/coe-mandmlab/bpatil/projects/Score-Entropy-Discrete-Diffusion/pretrain_byte.py \
+python -m palindromes.pretrain \
     ngpus=$SLURM_GPUS_PER_NODE \
-    training.batch_size=1024 \
+    training.batch_size=4096 \
     training.n_iters=200000 \
     training.disable_checkpoint_loading=true \
-    model.hidden_size=384 \
-    model.n_blocks=6 \
-    model.n_heads=6
+    model.hidden_size=768 \
+    model.n_blocks=12 \
+    model.n_heads=12
 
 echo "Pre-training completed. Starting palindrome fine-tuning..."
 
@@ -66,7 +66,7 @@ PRETRAIN_CHECKPOINT=$(find checkpoints -name "checkpoint_*.pth" -type f | sort -
 echo "Using pre-training checkpoint: $PRETRAIN_CHECKPOINT"
 
 # Palindrome fine-tuning stage
-python /nfs/turbo/coe-mandmlab/bpatil/projects/Score-Entropy-Discrete-Diffusion/train_palindrome.py \
+python -m palindromes.finetune \
     ngpus=$SLURM_GPUS_PER_NODE \
     training.batch_size=512 \
     training.n_iters=15000 \

@@ -1,12 +1,12 @@
 defaults:
   - _self_
-  - model: small
+  # - model: small
 
-ngpus: 4  # Multi-GPU training
+ngpus: 1  # Multi-GPU training
 tokens: 259  # 256 bytes + PAD + BOS + EOS
 
 training:
-  batch_size: 128  # Larger batch for pre-training
+  batch_size: 256  # Larger batch for pre-training
   accum: 1
   n_iters: 20000  # Pre-training iterations
   snapshot_freq: 5000
@@ -16,7 +16,7 @@ training:
   weight: standard
   snapshot_sampling: True
   ema: 0.999
-  disable_checkpoint_loading: false  # Set to true to start from scratch
+  disable_checkpoint_loading: True  # Set to true to start from scratch
   max_samples: 10000000
 
 data:
@@ -25,7 +25,7 @@ data:
   cache_dir: data
 
 graph:
-  type: absorb
+  type: uniform
   file: data
   report_all: False
 
@@ -53,19 +53,28 @@ optim:
   eps: 1e-8
   warmup: 2000
   grad_clip: 1.
+  # Muon optimizer settings
+  use_muon: False  # Set to true to use Muon optimizer
+  muon_lr: 0.002  # Learning rate for Muon (hidden weights)
+  muon_momentum: 0.95
+  muon_nesterov: True
+  muon_ns_steps: 5
+  adamw_lr: 3e-4  # Learning rate for AdamW (embeddings, heads, biases)
 
 model:
-  hidden_size: 384
+  hidden_size: 768
   cond_dim: 96
-  length: 128
-  n_blocks: 6
-  n_heads: 6
-  scale_by_sigma: True
+  length: 32
+  n_blocks: 12
+  n_heads: 12
+  scale_by_sigma: False
   dropout: 0.1
 
 logging:
   use_wandb: ${oc.env:USE_WANDB,false}  # Set USE_WANDB=true to enable
+  # use_wandb: False
   wandb_project: "palindrome-diffusion"
+  wandb_name: "larger_adamW_32_length_uniform"
   wandb_entity: null  # Your wandb entity/username
   log_grad_norm: true
   log_param_norm: true

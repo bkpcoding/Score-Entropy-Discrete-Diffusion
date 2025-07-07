@@ -32,11 +32,20 @@ class TrainingLogger:
         try:
             import wandb
             
+            # Get wandb name from config
+            wandb_name = getattr(self.config.logging, 'wandb_name', None)
+            if wandb_name is None:
+                wandb_name = getattr(self.config, 'wandb_name', None)
+            
+            # If no wandb_name in config, create a default name
+            if wandb_name is None:
+                wandb_name = f"experiment_{os.path.basename(self.work_dir)}"
+            
             # Initialize wandb
             self.wandb_run = wandb.init(
                 project=getattr(self.config.logging, 'wandb_project', 'diffusion-training'),
                 entity=getattr(self.config.logging, 'wandb_entity', 'sagar8'),
-                name=f"{self.config.get('experiment_name', 'experiment')}_{os.path.basename(self.work_dir)}",
+                name=wandb_name,
                 dir=self.work_dir,
                 config=self._flatten_config(self.config),
                 reinit=True
@@ -109,7 +118,7 @@ class TrainingLogger:
             except Exception as e:
                 logging.warning(f"Failed to log to local file: {e}")
     
-    def compute_training_metrics(self, model, optimizer, loss, config):
+    def compute_training_metrics(self, model, optimizer, loss, config, grad_norm=None):
         """Compute comprehensive training metrics"""
         metrics = {
             "train/loss": float(loss.item()) if torch.is_tensor(loss) else float(loss),
@@ -121,11 +130,14 @@ class TrainingLogger:
                 current_lr = optimizer.param_groups[0]['lr']
                 metrics["train/learning_rate"] = current_lr
         
-        # Gradient norms
+        # Gradient norms - use provided grad_norm if available, otherwise compute
         if hasattr(config.logging, 'log_grad_norm') and config.logging.log_grad_norm:
-            grad_norm = self._compute_grad_norm(model)
             if grad_norm is not None:
-                metrics["train/grad_norm"] = grad_norm
+                metrics["train/grad_norm"] = float(grad_norm)
+            else:
+                computed_grad_norm = self._compute_grad_norm(model)
+                if computed_grad_norm is not None:
+                    metrics["train/grad_norm"] = computed_grad_norm
         
         # Parameter norms
         if hasattr(config.logging, 'log_param_norm') and config.logging.log_param_norm:

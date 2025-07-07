@@ -18,7 +18,7 @@ from palindrome_json_loader import get_palindrome_dataloaders
 from logger_utils import setup_logger
 
 
-def save_checkpoint_single_gpu(ckpt_dir, state):
+def save_checkpoint_single_gpu(ckpt_dir, state, config=None):
     """Save checkpoint handling both DDP and non-DDP models"""
     model = state['model']
     # Handle both DDP and non-DDP models
@@ -33,6 +33,11 @@ def save_checkpoint_single_gpu(ckpt_dir, state):
         'ema': state['ema'].state_dict(),
         'step': state['step']
     }
+    
+    # Add config if provided for compatibility with sampling script
+    if config is not None:
+        saved_state['config'] = config
+    
     torch.save(saved_state, ckpt_dir)
 
 
@@ -220,7 +225,6 @@ def _run_training(rank, world_size, cfg):
         ema=ema, 
         step=0
     )
-    
     # Load checkpoint if exists and not disabled
     if not getattr(cfg.training, 'disable_checkpoint_loading', False):
         state = restore_checkpoint_single_gpu(checkpoint_meta_dir, state, device)
@@ -269,8 +273,12 @@ def _run_training(rank, world_size, cfg):
         step = state['step']
         
         # Get training batch
-        batch = next(train_iter)['input_ids'].to(device)
-        loss = train_step_fn(state, batch)
+        try:
+            batch = next(train_iter)['input_ids'].to(device)
+        except StopIteration:
+            train_iter = iter(train_ds)
+            batch = next(train_iter)['input_ids'].to(device)
+        loss, _ = train_step_fn(state, batch)
         
         # Check if step was incremented (full batch computed)
         if step != state['step']:
@@ -289,12 +297,16 @@ def _run_training(rank, world_size, cfg):
             
             # Save checkpoint for preemption
             if step % cfg.training.snapshot_freq_for_preemption == 0 and rank == 0:
-                save_checkpoint_single_gpu(checkpoint_meta_dir, state)
+                save_checkpoint_single_gpu(checkpoint_meta_dir, state, cfg)
             
             # Evaluation
             if step % cfg.training.eval_freq == 0:
-                eval_batch = next(eval_iter)['input_ids'].to(device)
-                eval_loss = eval_step_fn(state, eval_batch)
+                try:
+                    eval_batch = next(eval_iter)['input_ids'].to(device)
+                except StopIteration:
+                    eval_iter = iter(eval_ds)
+                    eval_batch = next(eval_iter)['input_ids'].to(device)
+                eval_loss, _ = eval_step_fn(state, eval_batch)
                 
                 if world_size > 1:
                     dist.all_reduce(eval_loss)
@@ -313,8 +325,9 @@ def _run_training(rank, world_size, cfg):
                 save_step = step // cfg.training.snapshot_freq
                 if rank == 0:
                     save_checkpoint_single_gpu(
-                        os.path.join(checkpoint_dir, f'checkpoint_{save_step}.pth'), 
-                        state
+                        os.path.join(checkpoint_dir, f'finetune_checkpoint_{save_step}.pth'), 
+                        state,
+                        cfg
                     )
                 
                 # Generate samples
@@ -340,7 +353,7 @@ def _run_training(rank, world_size, cfg):
                     dist.barrier()
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="palindrome_byte")
+@hydra.main(version_base=None, config_path="../configs", config_name="finetune")
 def main(config: DictConfig) -> None:
     """Main training function for palindrome model - Single GPU only"""
     
@@ -354,7 +367,6 @@ def main(config: DictConfig) -> None:
         config.work_dir = work_dir
         config.wandb_name = os.path.basename(os.path.normpath(work_dir))
         config.ngpus = 1  # Force single GPU
-    
     # Single GPU training only
     _run_training(0, 1, config)
 

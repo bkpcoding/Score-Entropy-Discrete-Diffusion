@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - model: small
+  # - model: small
 
 ngpus: 4  # Multi-GPU training
 tokens: 259  # 256 bytes + PAD + BOS + EOS
@@ -8,7 +8,7 @@ tokens: 259  # 256 bytes + PAD + BOS + EOS
 training:
   batch_size: 64  # Smaller batch size for byte-level
   accum: 1
-  n_iters: 10000
+  n_iters: 75000
   snapshot_freq: 1000
   log_freq: 50
   eval_freq: 500
@@ -25,7 +25,7 @@ data:
   cache_dir: data
 
 graph:
-  type: absorb
+  type: uniform
   file: data
   report_all: False
 
@@ -53,18 +53,28 @@ optim:
   eps: 1e-8
   warmup: 2000
   grad_clip: 1.
+    # Muon optimizer settings
+  use_muon: False  # Set to true to use Muon optimizer
+  muon_lr: 0.002  # Learning rate for Muon (hidden weights)
+  muon_momentum: 0.95
+  muon_nesterov: True
+  muon_ns_steps: 5
+  adamw_lr: 3e-4  # Learning rate for AdamW (embeddings, heads, biases)
+
+
 
 model:
-  hidden_size: 384
+  hidden_size: 768
   cond_dim: 96
-  length: 128
-  n_blocks: 6
-  n_heads: 6
-  scale_by_sigma: True
+  length: 32
+  n_blocks: 12
+  n_heads: 12
+  scale_by_sigma: False
   dropout: 0.1
 
 logging:
-  use_wandb: ${oc.env:USE_WANDB,false}  # Set USE_WANDB=true to enable
+  # use_wandb: ${oc.env:USE_WANDB,false}  # Set USE_WANDB=true to enable
+  use_wandb: false
   wandb_project: "palindrome-diffusion"
   wandb_entity: null  # Your wandb entity/username
   log_grad_norm: true

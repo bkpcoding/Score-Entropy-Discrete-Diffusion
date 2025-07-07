@@ -6,11 +6,11 @@ __pycache__
 .ipynb_checkpoints/
 .DS_Store
 **.pyc
-*.png
-*.txt
-*.err
-*.out
-*.bin
+**.png
+**.txt
+**.err
+**.out
+**.bin
 logs/
 logs
 **/outputs/

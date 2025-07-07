@@ -258,7 +258,8 @@ class SEDD(nn.Module, PyTorchModelHubMixin):
 
 
     def forward(self, indices, sigma):
-
+        
+        # indices = indices.long()
         x = self.vocab_embed(indices)
         c = F.silu(self.sigma_map(sigma))
 

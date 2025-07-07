@@ -49,6 +49,84 @@ def get_optimizer(config, params):
     return optimizer
 
 
+def get_muon_optimizer(config, model):
+    """
+    Create Muon optimizer with proper parameter grouping.
+    Muon is used for hidden weights (2D parameters), AdamW for everything else.
+    """
+    try:
+        from muon import MuonWithAuxAdam
+    except ImportError:
+        raise ImportError("Muon optimizer not found. Please install it with: pip install muon")
+    
+    # Categorize parameters based on model structure
+    hidden_weights = []
+    hidden_gains_biases = []
+    embed_params = []
+    head_params = []
+    
+    for name, param in model.named_parameters():
+        if 'vocab_embed' in name:
+            embed_params.append(param)
+        elif 'output_layer' in name:
+            head_params.append(param)
+        elif 'blocks' in name and param.ndim >= 2:
+            hidden_weights.append(param)
+        else:
+            hidden_gains_biases.append(param)
+    
+    # Create parameter groups according to Muon requirements
+    param_groups = [
+        dict(params=hidden_weights, 
+             lr=config.optim.muon_lr, 
+             momentum=config.optim.muon_momentum,
+             weight_decay=config.optim.weight_decay,
+             use_muon=True),
+        dict(params=hidden_gains_biases + embed_params + head_params, 
+             lr=config.optim.adamw_lr, 
+             betas=(config.optim.beta1, config.optim.beta2),
+             eps=config.optim.eps,
+             weight_decay=config.optim.weight_decay,
+             use_muon=False),
+    ]
+    
+    optimizer = MuonWithAuxAdam(param_groups)
+    return optimizer
+
+
+def get_lr_schedule(step, config):
+    """
+    Learning rate schedule with warmup, constant phase, and cosine decay.
+    
+    Args:
+        step: Current training step
+        config: Configuration object containing training parameters
+        
+    Returns:
+        Learning rate multiplier
+    """
+    total_steps = config.training.n_iters
+    warmup_steps = config.optim.warmup
+    
+    # Calculate phase boundaries
+    decay_start_step = int(total_steps * 0.8)  # Last 20% for cosine decay
+    
+    if step <= warmup_steps:
+        # Linear warmup phase
+        return step / warmup_steps
+    elif step <= decay_start_step:
+        # Constant learning rate phase
+        return 1.0
+    else:
+        # Cosine decay phase (last 20% of training)
+        decay_steps = total_steps - decay_start_step
+        current_decay_step = step - decay_start_step
+        
+        # Cosine decay from 1.0 to 0.1 (one order of magnitude)
+        decay_factor = 0.5 * (1 + np.cos(np.pi * current_decay_step / decay_steps))
+        return 0.1 + 0.9 * decay_factor
+
+
 def optimization_manager(config):
     """Returns an optimize_fn based on `config`."""
 
@@ -59,12 +137,24 @@ def optimization_manager(config):
                     lr=config.optim.lr,
                     warmup=config.optim.warmup,
                     grad_clip=config.optim.grad_clip):
-        """Optimizes with warmup and gradient clipping (disabled if negative)."""
+        """Optimizes with advanced learning rate schedule and gradient clipping."""
         scaler.unscale_(optimizer)
 
-        if warmup > 0:
+        # Apply advanced learning rate schedule
+        lr_multiplier = get_lr_schedule(step, config)
+        
+        if config.optim.use_muon:
+            # Handle Muon optimizer with advanced schedule
             for g in optimizer.param_groups:
-                g['lr'] = lr * np.minimum(step / warmup, 1.0)
+                if g.get('use_muon', False):
+                    g['lr'] = config.optim.muon_lr * lr_multiplier
+                else:
+                    g['lr'] = config.optim.adamw_lr * lr_multiplier
+        else:
+            # Standard optimizer with advanced schedule
+            for g in optimizer.param_groups:
+                g['lr'] = lr * lr_multiplier
+        
         if grad_clip >= 0:
             torch.nn.utils.clip_grad_norm_(params, max_norm=grad_clip)
 
@@ -72,6 +162,29 @@ def optimization_manager(config):
         scaler.update()
 
     return optimize_fn
+
+
+def compute_grad_norm(model):
+    """Compute gradient norm for model parameters"""
+    total_norm = 0.0
+    param_count = 0
+    
+    # Handle both DDP and non-DDP models
+    if hasattr(model, 'module'):
+        parameters = model.module.parameters()
+    else:
+        parameters = model.parameters()
+    
+    for p in parameters:
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+            param_count += 1
+    
+    if param_count > 0:
+        total_norm = total_norm ** (1. / 2)
+    
+    return total_norm
 
 
 def get_step_fn(noise, graph, train, optimize_fn, accum):
@@ -85,6 +198,7 @@ def get_step_fn(noise, graph, train, optimize_fn, accum):
         nonlocal total_loss
 
         model = state['model']
+        grad_norm = 0.0
 
         if train:
             optimizer = state['optimizer']
@@ -98,6 +212,9 @@ def get_step_fn(noise, graph, train, optimize_fn, accum):
             if accum_iter == accum:
                 accum_iter = 0
 
+                # Compute gradient norm BEFORE optimizer step
+                grad_norm = compute_grad_norm(model)
+                
                 state['step'] += 1
                 optimize_fn(optimizer, scaler, model.parameters(), step=state['step'])
                 state['ema'].update(model.parameters())
@@ -113,6 +230,6 @@ def get_step_fn(noise, graph, train, optimize_fn, accum):
                 loss = loss_fn(model, batch, cond=cond).mean()
                 ema.restore(model.parameters())
 
-        return loss
+        return loss, grad_norm
 
     return step_fn
